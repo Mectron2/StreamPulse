@@ -1,0 +1,37 @@
+services:
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: stream-pulse-rabbitmq
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  ingester:
+    build:
+      context: ./ingester
+    container_name: stream-pulse-ingester
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_EXCHANGE: wikimedia
+      RABBITMQ_QUEUE: wikimedia.recentchange
+      RABBITMQ_ROUTING_KEY: recentchange
+    ports:
+      - '3000:3000'
+    restart: unless-stopped
+
+volumes:
+  rabbitmq_data:
