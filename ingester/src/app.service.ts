@@ -38,9 +38,16 @@ export class AppService
   private recentChangesSubscription?: Subscription;
   private rabbitMqConnection?: ChannelModel;
   private rabbitMqChannel?: ConfirmChannel;
+  private publishedPerInterval = 0;
+  private readonly LOG_INTERVAL_MS = 60000;
+  private intervalRef?: ReturnType<typeof setInterval>;
 
   async onApplicationBootstrap(): Promise<void> {
     await this.connectRabbitMq();
+    this.intervalRef = setInterval(
+      () => this.logPublishedCount(),
+      this.LOG_INTERVAL_MS,
+    );
 
     this.recentChangesSubscription = this.createRecentChangesStream()
       .pipe(
@@ -70,6 +77,9 @@ export class AppService
 
     await this.rabbitMqChannel?.close();
     await this.rabbitMqConnection?.close();
+    if (this.intervalRef) {
+      clearInterval(this.intervalRef);
+    }
   }
 
   private createRecentChangesStream(): Observable<WikimediaRecentChange> {
@@ -212,10 +222,21 @@ export class AppService
             return;
           }
 
+          this.publishedPerInterval++;
           resolve();
         },
       );
     });
+  }
+
+  private logPublishedCount(): void {
+    this.logger.log({
+      message: 'info.published_count',
+      publishedCount: this.publishedPerInterval,
+      eventsPerSecond:
+        this.publishedPerInterval / (this.LOG_INTERVAL_MS / 1000),
+    });
+    this.publishedPerInterval = 0;
   }
 
   private getErrorMessage(error: unknown): string {

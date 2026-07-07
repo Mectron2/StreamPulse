@@ -29,18 +29,27 @@ export class RabbitmqService
   private channel?: ConfirmChannel;
   private shuttingDown = false;
   private reconnecting = false;
+  private processedPerInterval = 0;
+  private LOG_INTERVAL_MS = 60000;
+  private intervalRef?: ReturnType<typeof setInterval>;
 
   constructor(private readonly eventsService: EventsService) {}
 
   async onApplicationBootstrap(): Promise<void> {
     await this.connectAndConsume();
+    this.intervalRef = setInterval(
+      () => this.logProcessedCount(),
+      this.LOG_INTERVAL_MS,
+    );
   }
 
   async onApplicationShutdown(): Promise<void> {
     this.shuttingDown = true;
-
     await this.channel?.close();
     await this.connection?.close();
+    if (this.intervalRef) {
+      clearInterval(this.intervalRef);
+    }
   }
 
   private async connectAndConsume(): Promise<void> {
@@ -114,6 +123,16 @@ export class RabbitmqService
     );
   }
 
+  private logProcessedCount(): void {
+    this.logger.log({
+      message: 'info.processed_count',
+      processedCount: this.processedPerInterval,
+      eventsPerSecond:
+        this.processedPerInterval / (this.LOG_INTERVAL_MS / 1000),
+    });
+    this.processedPerInterval = 0;
+  }
+
   private async handleMessage(message: ConsumeMessage): Promise<void> {
     if (!this.channel) {
       throw new Error('RabbitMQ channel is not initialized');
@@ -131,6 +150,7 @@ export class RabbitmqService
 
       await this.publishProcessedEvent(processedEvent);
       this.channel.ack(message);
+      this.processedPerInterval++;
     } catch (error) {
       this.logger.error(
         `Failed to process RabbitMQ message: ${this.getErrorMessage(error)}`,
