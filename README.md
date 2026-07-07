@@ -68,14 +68,15 @@ queue: wikimedia.recentchange
 
 ### Aggregator
 
-The aggregator is planned as the processing and persistence service.
+The aggregator processes raw Wikimedia events and stores queryable history.
 
-Expected responsibilities:
+Current behavior:
 
-- Consume raw events from `wikimedia.recentchange`.
-- Normalize, validate, and aggregate events.
-- Persist history and aggregate state in PostgreSQL.
-- Publish processed events back to RabbitMQ.
+- Consumes raw events from `wikimedia.recentchange`.
+- Normalizes events into processed Wikimedia change objects.
+- Calculates tags, diff size, risk score, importance score, and project type.
+- Persists processed events in PostgreSQL through TypeORM.
+- Publishes processed events back to RabbitMQ.
 
 RabbitMQ output:
 
@@ -170,6 +171,12 @@ The ingester service listens on:
 http://localhost:3000
 ```
 
+The aggregator service listens on:
+
+```text
+http://localhost:3001
+```
+
 ## Current Repository Structure
 
 ```text
@@ -178,6 +185,7 @@ http://localhost:3000
 |-- README.md
 |-- diagram.png
 |-- docker-compose.yml
+|-- aggregator/
 `-- ingester/
 ```
 
@@ -237,9 +245,9 @@ docker compose config
 
 ## Project Notes
 
-- The current implemented microservice is `ingester`.
-- RabbitMQ and the ingester are wired in `docker-compose.yml`.
-- Aggregator, PostgreSQL integration, MongoDB raw storage, Redis caching, gateway, frontend, Kubernetes, Helm, and observability are planned next.
+- The current implemented microservices are `ingester` and `aggregator`.
+- RabbitMQ, PostgreSQL, the ingester, and the aggregator are wired in `docker-compose.yml`.
+- MongoDB raw storage, Redis caching, gateway, frontend, Kubernetes, Helm, and observability are planned next.
 - Architecture guidance for future agents and contributors is documented in `AGENTS.md`.
 
 ## Roadmap
