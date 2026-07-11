@@ -88,6 +88,7 @@ services:
         condition: service_started
     environment:
       PORT: 3002
+      FRONTEND_ORIGIN: http://localhost:5173
       AGGREGATOR_URL: http://aggregator:3001
       AGGREGATOR_REQUEST_TIMEOUT_MS: 5000
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
@@ -97,6 +98,17 @@ services:
       RABBITMQ_PREFETCH: 10
     ports:
       - '3002:3002'
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: stream-pulse-frontend
+    depends_on:
+      gateway:
+        condition: service_started
+    ports:
+      - '5173:80'
     restart: unless-stopped
 
 volumes:
