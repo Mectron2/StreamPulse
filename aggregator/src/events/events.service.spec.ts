@@ -37,4 +37,50 @@ describe('EventsService', () => {
       importanceScore: 80,
     });
   });
+
+  it('returns a stable cursor and removes the look-ahead row', async () => {
+    const rows = ['3', '2', '1'].map((id) => ({
+      id,
+      timestamp: new Date('2026-07-11T12:00:00.000Z'),
+    }));
+    const query = {
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue(rows),
+    };
+    const repository = {
+      createQueryBuilder: jest.fn().mockReturnValue(query),
+    } as unknown as Repository<ProcessedEventEntity>;
+
+    const result = await new EventsService(repository).findProcessedEvents(2);
+
+    expect(query.orderBy).toHaveBeenCalledWith('event.timestamp', 'DESC');
+    expect(query.addOrderBy).toHaveBeenCalledWith('event.id', 'DESC');
+    expect(query.take).toHaveBeenCalledWith(3);
+    expect(result.items).toEqual(rows.slice(0, 2));
+    expect(
+      JSON.parse(Buffer.from(result.nextCursor!, 'base64url').toString('utf8')),
+    ).toEqual({ timestamp: '2026-07-11T12:00:00.000Z', id: '2' });
+  });
+
+  it('returns no cursor on the final page', async () => {
+    const query = {
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    };
+    const repository = {
+      createQueryBuilder: jest.fn().mockReturnValue(query),
+    } as unknown as Repository<ProcessedEventEntity>;
+    await expect(
+      new EventsService(repository).findProcessedEvents(50),
+    ).resolves.toEqual({
+      items: [],
+      nextCursor: null,
+    });
+  });
 });

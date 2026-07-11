@@ -77,6 +77,28 @@ services:
       - '3001:3001'
     restart: unless-stopped
 
+  gateway:
+    build:
+      context: ./gateway
+    container_name: stream-pulse-gateway
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      aggregator:
+        condition: service_started
+    environment:
+      PORT: 3002
+      AGGREGATOR_URL: http://aggregator:3001
+      AGGREGATOR_REQUEST_TIMEOUT_MS: 5000
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_EXCHANGE: wikimedia
+      RABBITMQ_PROCESSED_QUEUE: wikimedia.recentchange.processed
+      RABBITMQ_PROCESSED_ROUTING_KEY: recentchange.processed
+      RABBITMQ_PREFETCH: 10
+    ports:
+      - '3002:3002'
+    restart: unless-stopped
+
 volumes:
   rabbitmq_data:
   postgres_data:
