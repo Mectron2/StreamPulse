@@ -35,6 +35,21 @@ describe('AppService', () => {
     );
   });
 
+  it('proxies Binance trade history', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    });
+
+    await new AppService().getBinanceTrades('10', 'trade-cursor');
+
+    const [url] = (global.fetch as jest.MockedFunction<typeof fetch>).mock
+      .calls[0];
+    expect((url as URL).pathname).toBe('/internal/binance/trades');
+    expect((url as URL).search).toBe('?limit=10&cursor=trade-cursor');
+  });
+
   it('maps network failures to bad gateway', async () => {
     global.fetch = jest.fn().mockRejectedValue(new Error('offline'));
     await expect(new AppService().getEvents()).rejects.toBeInstanceOf(

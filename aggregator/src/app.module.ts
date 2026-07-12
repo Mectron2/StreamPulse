@@ -4,6 +4,8 @@ import { EventsModule } from './events/events.module';
 import { ProcessedEventEntity } from './events/processed-event.entity';
 import { HealthController } from './health/health.controller';
 import { RabbitmqModule } from './rabbitmq/rabbitmq.module';
+import { BinanceModule } from './binance/binance.module';
+import { BinanceTradeEntity } from './binance/binance-trade.entity';
 
 @Module({
   imports: [
@@ -14,10 +16,11 @@ import { RabbitmqModule } from './rabbitmq/rabbitmq.module';
       username: process.env.POSTGRES_USER ?? 'stream_pulse',
       password: process.env.POSTGRES_PASSWORD ?? 'stream_pulse',
       database: process.env.POSTGRES_DB ?? 'stream_pulse',
-      entities: [ProcessedEventEntity],
+      entities: [ProcessedEventEntity, BinanceTradeEntity],
       synchronize: (process.env.TYPEORM_SYNCHRONIZE ?? 'true') === 'true',
     }),
     EventsModule,
+    BinanceModule,
     RabbitmqModule,
   ],
   controllers: [HealthController],

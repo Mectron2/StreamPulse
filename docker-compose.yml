@@ -67,6 +67,11 @@ services:
       RABBITMQ_RAW_ROUTING_KEY: recentchange
       RABBITMQ_PROCESSED_QUEUE: wikimedia.recentchange.processed
       RABBITMQ_PROCESSED_ROUTING_KEY: recentchange.processed
+      RABBITMQ_BINANCE_EXCHANGE: binance
+      RABBITMQ_BINANCE_RAW_QUEUE: binance.aggTrade
+      RABBITMQ_BINANCE_RAW_ROUTING_KEY: aggTrade
+      RABBITMQ_BINANCE_PROCESSED_QUEUE: binance.aggTrade.processed
+      RABBITMQ_BINANCE_PROCESSED_ROUTING_KEY: aggTrade.processed
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: stream_pulse
@@ -95,6 +100,9 @@ services:
       RABBITMQ_EXCHANGE: wikimedia
       RABBITMQ_PROCESSED_QUEUE: wikimedia.recentchange.processed
       RABBITMQ_PROCESSED_ROUTING_KEY: recentchange.processed
+      RABBITMQ_BINANCE_EXCHANGE: binance
+      RABBITMQ_BINANCE_PROCESSED_QUEUE: binance.aggTrade.processed
+      RABBITMQ_BINANCE_PROCESSED_ROUTING_KEY: aggTrade.processed
       RABBITMQ_PREFETCH: 10
     ports:
       - '3002:3002'

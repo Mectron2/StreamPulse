@@ -14,4 +14,12 @@ export class AppController {
   getEvents(@Query('limit') limit?: string, @Query('cursor') cursor?: string) {
     return this.appService.getEvents(limit, cursor);
   }
+
+  @Get('binance/trades')
+  getBinanceTrades(
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.appService.getBinanceTrades(limit, cursor);
+  }
 }
