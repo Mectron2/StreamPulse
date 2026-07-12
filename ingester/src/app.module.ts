@@ -1,18 +1,21 @@
 import { Module } from '@nestjs/common';
 import { AppService } from './app.service';
 import { WikimediaSource } from './wikimedia/wikimedia-source';
-import { EVENT_SOURCE } from './event-source.interface';
+import EventSource, { EVENT_SOURCES } from './event-source.interface';
+
+const eventSourceProviders = [WikimediaSource];
 
 @Module({
   imports: [],
   providers: [
     AppService,
-    WikimediaSource,
+    ...eventSourceProviders,
     {
-      provide: EVENT_SOURCE,
-      useExisting: WikimediaSource,
+      provide: EVENT_SOURCES,
+      useFactory: (...sources: EventSource[]): EventSource[] => sources,
+      inject: eventSourceProviders,
     },
   ],
-  exports: [EVENT_SOURCE],
+  exports: [EVENT_SOURCES],
 })
 export class AppModule {}

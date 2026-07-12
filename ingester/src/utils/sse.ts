@@ -1,10 +1,10 @@
 import { Subscriber } from 'rxjs';
-import { isRecord } from './misc';
 
-export async function readSSE<Sub>(
+export async function readSSE<TEvent>(
   signal: AbortSignal,
   url: string,
-  subscriber: Subscriber<Sub>,
+  subscriber: Subscriber<TEvent>,
+  parseEvent: (value: unknown) => TEvent | undefined,
 ): Promise<void> {
   try {
     const response = await fetch(url, {
@@ -28,11 +28,11 @@ export async function readSSE<Sub>(
       }
 
       buffer += decoder.decode(value, { stream: true });
-      buffer = emitBufferedEvents(buffer, subscriber);
+      buffer = emitBufferedEvents(buffer, subscriber, parseEvent);
     }
 
     buffer += decoder.decode();
-    emitBufferedEvents(`${buffer}\n\n`, subscriber);
+    emitBufferedEvents(`${buffer}\n\n`, subscriber, parseEvent);
 
     if (!subscriber.closed) {
       subscriber.complete();
@@ -44,9 +44,10 @@ export async function readSSE<Sub>(
   }
 }
 
-function emitBufferedEvents<Sub>(
+function emitBufferedEvents<TEvent>(
   buffer: string,
-  subscriber: Subscriber<Sub>,
+  subscriber: Subscriber<TEvent>,
+  parseEvent: (value: unknown) => TEvent | undefined,
 ): string {
   const normalizedBuffer = buffer.replace(/\r\n/g, '\n');
   const events = normalizedBuffer.split('\n\n');
@@ -63,9 +64,9 @@ function emitBufferedEvents<Sub>(
       continue;
     }
 
-    const parsedEvent = JSON.parse(data) as Sub;
+    const parsedEvent = parseEvent(JSON.parse(data) as unknown);
 
-    if (isRecord(parsedEvent)) {
+    if (parsedEvent !== undefined) {
       subscriber.next(parsedEvent);
     }
   }
