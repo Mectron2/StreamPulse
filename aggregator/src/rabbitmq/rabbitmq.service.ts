@@ -1,12 +1,17 @@
 import {
+  Inject,
   Injectable,
   Logger,
   OnApplicationBootstrap,
   OnApplicationShutdown,
 } from '@nestjs/common';
 import { ChannelModel, ConfirmChannel, ConsumeMessage, connect } from 'amqplib';
-import { EventsService } from '../events/events.service';
-import { WikimediaRecentChange } from '../events/wikimedia-recent-change.type';
+import {
+  EVENT_HANDLERS,
+  EventHandler,
+  EventRoute,
+} from './event-handler.interface';
+import { MetricsService } from '../observability/metrics.service';
 
 @Injectable()
 export class RabbitmqService
@@ -15,25 +20,20 @@ export class RabbitmqService
   private readonly logger = new Logger(RabbitmqService.name);
   private readonly rabbitMqUrl =
     process.env.RABBITMQ_URL ?? 'amqp://guest:guest@localhost:5672';
-  private readonly exchange = process.env.RABBITMQ_EXCHANGE ?? 'wikimedia';
-  private readonly rawQueue =
-    process.env.RABBITMQ_RAW_QUEUE ?? 'wikimedia.recentchange';
-  private readonly rawRoutingKey =
-    process.env.RABBITMQ_RAW_ROUTING_KEY ?? 'recentchange';
-  private readonly processedQueue =
-    process.env.RABBITMQ_PROCESSED_QUEUE ?? 'wikimedia.recentchange.processed';
-  private readonly processedRoutingKey =
-    process.env.RABBITMQ_PROCESSED_ROUTING_KEY ?? 'recentchange.processed';
-
   private connection?: ChannelModel;
   private channel?: ConfirmChannel;
   private shuttingDown = false;
   private reconnecting = false;
   private processedPerInterval = 0;
-  private LOG_INTERVAL_MS = 60000;
+  private readonly LOG_INTERVAL_MS = 60000;
   private intervalRef?: ReturnType<typeof setInterval>;
+  private queueMetricsIntervalRef?: ReturnType<typeof setInterval>;
 
-  constructor(private readonly eventsService: EventsService) {}
+  constructor(
+    @Inject(EVENT_HANDLERS)
+    private readonly handlers: EventHandler[],
+    private readonly metrics: MetricsService,
+  ) {}
 
   async onApplicationBootstrap(): Promise<void> {
     await this.connectAndConsume();
@@ -41,28 +41,32 @@ export class RabbitmqService
       () => this.logProcessedCount(),
       this.LOG_INTERVAL_MS,
     );
+    this.queueMetricsIntervalRef = setInterval(
+      () => void this.collectQueueMetrics(),
+      Number(process.env.RABBITMQ_QUEUE_METRICS_INTERVAL_MS ?? 10000),
+    );
+    await this.collectQueueMetrics();
   }
 
   async onApplicationShutdown(): Promise<void> {
     this.shuttingDown = true;
     await this.channel?.close();
     await this.connection?.close();
-    if (this.intervalRef) {
-      clearInterval(this.intervalRef);
-    }
+    if (this.intervalRef) clearInterval(this.intervalRef);
+    if (this.queueMetricsIntervalRef)
+      clearInterval(this.queueMetricsIntervalRef);
   }
 
   private async connectAndConsume(): Promise<void> {
     while (!this.shuttingDown) {
       try {
         await this.connectRabbitMq();
-        await this.consumeRawEvents();
         return;
       } catch (error) {
         this.logger.warn(
-          `RabbitMQ connection failed, retrying in 5s: ${this.getErrorMessage(error)}`,
+          `RabbitMQ connection failed, retrying in 5s: ${this.message(error)}`,
         );
-        await this.delay(5000);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
       }
     }
   }
@@ -70,57 +74,146 @@ export class RabbitmqService
   private async connectRabbitMq(): Promise<void> {
     this.connection = await connect(this.rabbitMqUrl);
     this.channel = await this.connection.createConfirmChannel();
-
-    await this.channel.assertExchange(this.exchange, 'topic', {
-      durable: true,
-    });
-    await this.channel.assertQueue(this.rawQueue, {
-      durable: true,
-    });
-    await this.channel.bindQueue(
-      this.rawQueue,
-      this.exchange,
-      this.rawRoutingKey,
-    );
-    await this.channel.assertQueue(this.processedQueue, {
-      durable: true,
-    });
-    await this.channel.bindQueue(
-      this.processedQueue,
-      this.exchange,
-      this.processedRoutingKey,
-    );
     await this.channel.prefetch(Number(process.env.RABBITMQ_PREFETCH ?? 10));
 
+    for (const handler of this.handlers) {
+      await this.assertRoute(handler.rawRoute);
+      await this.assertRoute(handler.processedRoute);
+      await this.consume(handler);
+    }
+
     this.connection.on('error', (error) => {
-      this.logger.error(
-        `RabbitMQ connection error: ${this.getErrorMessage(error)}`,
-      );
+      this.logger.error(`RabbitMQ connection error: ${this.message(error)}`);
     });
     this.connection.on('close', () => {
-      this.logger.warn('RabbitMQ connection closed');
+      if (!this.shuttingDown) this.logger.warn('RabbitMQ connection closed');
       void this.reconnectAfterClose();
     });
 
     this.logger.log(
-      `Connected to RabbitMQ queue "${this.rawQueue}", publishing "${this.processedRoutingKey}"`,
+      `Consuming event sources: ${this.handlers.map((item) => item.name).join(', ')}`,
     );
   }
 
-  private async consumeRawEvents(): Promise<void> {
-    if (!this.channel) {
-      throw new Error('RabbitMQ channel is not initialized');
-    }
+  private async assertRoute(route: EventRoute): Promise<void> {
+    if (!this.channel) throw new Error('RabbitMQ channel is not initialized');
+    await this.channel.assertExchange(route.exchange, 'topic', {
+      durable: true,
+    });
+    await this.channel.assertQueue(route.queue, { durable: true });
+    await this.channel.bindQueue(route.queue, route.exchange, route.routingKey);
+  }
 
+  private async consume(handler: EventHandler): Promise<void> {
+    if (!this.channel) throw new Error('RabbitMQ channel is not initialized');
     await this.channel.consume(
-      this.rawQueue,
+      handler.rawRoute.queue,
       (message) => {
-        if (!message) return;
-
-        void this.handleMessage(message);
+        if (message) void this.handleMessage(handler, message);
       },
       { noAck: false },
     );
+  }
+
+  private async handleMessage(
+    handler: EventHandler,
+    message: ConsumeMessage,
+  ): Promise<void> {
+    if (!this.channel) return;
+    const stopTimer = this.metrics.startProcessingTimer(handler.name);
+
+    try {
+      const payload = this.parseMessage(message, handler.name);
+      if (payload === null) {
+        this.metrics.recordProcessedEvent(handler.name, 'invalid');
+        this.channel.ack(message);
+        return;
+      }
+
+      const processed = await handler.process(payload);
+      if (processed === null) {
+        this.metrics.recordProcessedEvent(handler.name, 'invalid');
+        this.channel.ack(message);
+        return;
+      }
+
+      await this.publish(handler.processedRoute, processed);
+      this.channel.ack(message);
+      this.processedPerInterval++;
+      this.metrics.recordProcessedEvent(handler.name, 'success');
+    } catch (error) {
+      this.metrics.recordProcessedEvent(handler.name, 'error');
+      this.logger.error(
+        `Failed to process ${handler.name} message: ${this.message(error)}`,
+      );
+      this.channel.nack(message, false, true);
+    } finally {
+      stopTimer();
+    }
+  }
+
+  private async collectQueueMetrics(): Promise<void> {
+    if (!this.channel) return;
+
+    try {
+      for (const handler of this.handlers) {
+        const queue = await this.channel.checkQueue(handler.rawRoute.queue);
+        this.metrics.setQueueMessagesReady(
+          handler.name,
+          handler.rawRoute.queue,
+          queue.messageCount,
+        );
+      }
+    } catch (error) {
+      if (!this.shuttingDown) {
+        this.logger.warn(
+          `Failed to collect queue metrics: ${this.message(error)}`,
+        );
+      }
+    }
+  }
+
+  private parseMessage(message: ConsumeMessage, source: string): unknown {
+    try {
+      return JSON.parse(message.content.toString()) as unknown;
+    } catch (error) {
+      this.logger.warn(
+        `Discarding invalid ${source} JSON: ${this.message(error)}`,
+      );
+      return null;
+    }
+  }
+
+  private publish(route: EventRoute, payload: unknown): Promise<void> {
+    if (!this.channel) {
+      return Promise.reject(new Error('RabbitMQ channel is not initialized'));
+    }
+
+    return new Promise((resolve, reject) => {
+      this.channel?.publish(
+        route.exchange,
+        route.routingKey,
+        Buffer.from(JSON.stringify(payload)),
+        {
+          contentType: 'application/json',
+          deliveryMode: 2,
+          timestamp: Date.now(),
+        },
+        (error: Error | null) => (error ? reject(error) : resolve()),
+      );
+    });
+  }
+
+  private async reconnectAfterClose(): Promise<void> {
+    if (this.shuttingDown || this.reconnecting) return;
+    this.reconnecting = true;
+    this.channel = undefined;
+    this.connection = undefined;
+    try {
+      await this.connectAndConsume();
+    } finally {
+      this.reconnecting = false;
+    }
   }
 
   private logProcessedCount(): void {
@@ -133,102 +226,7 @@ export class RabbitmqService
     this.processedPerInterval = 0;
   }
 
-  private async handleMessage(message: ConsumeMessage): Promise<void> {
-    if (!this.channel) {
-      throw new Error('RabbitMQ channel is not initialized');
-    }
-
-    try {
-      const rawEvent = this.parseMessage(message);
-
-      if (!rawEvent) {
-        this.channel.ack(message);
-        return;
-      }
-
-      const processedEvent = await this.eventsService.processAndSave(rawEvent);
-
-      await this.publishProcessedEvent(processedEvent);
-      this.channel.ack(message);
-      this.processedPerInterval++;
-    } catch (error) {
-      this.logger.error(
-        `Failed to process RabbitMQ message: ${this.getErrorMessage(error)}`,
-      );
-      this.channel.nack(message, false, true);
-    }
-  }
-
-  private parseMessage(message: ConsumeMessage): WikimediaRecentChange | null {
-    try {
-      const parsed = JSON.parse(message.content.toString()) as unknown;
-
-      if (this.isRecord(parsed)) {
-        return parsed;
-      }
-
-      this.logger.warn('Received non-object Wikimedia event');
-      return null;
-    } catch (error) {
-      this.logger.warn(
-        `Received invalid JSON from RabbitMQ: ${this.getErrorMessage(error)}`,
-      );
-      return null;
-    }
-  }
-
-  private publishProcessedEvent(payload: unknown): Promise<void> {
-    if (!this.channel) {
-      return Promise.reject(new Error('RabbitMQ channel is not initialized'));
-    }
-
-    return new Promise((resolve, reject) => {
-      this.channel?.publish(
-        this.exchange,
-        this.processedRoutingKey,
-        Buffer.from(JSON.stringify(payload)),
-        {
-          contentType: 'application/json',
-          deliveryMode: 2,
-          timestamp: Date.now(),
-        },
-        (error: Error | null) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-
-          resolve();
-        },
-      );
-    });
-  }
-
-  private async reconnectAfterClose(): Promise<void> {
-    if (this.shuttingDown || this.reconnecting) {
-      return;
-    }
-
-    this.reconnecting = true;
-    this.channel = undefined;
-    this.connection = undefined;
-
-    try {
-      await this.connectAndConsume();
-    } finally {
-      this.reconnecting = false;
-    }
-  }
-
-  private isRecord(value: unknown): value is WikimediaRecentChange {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  private getErrorMessage(error: unknown): string {
+  private message(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
   }
 }

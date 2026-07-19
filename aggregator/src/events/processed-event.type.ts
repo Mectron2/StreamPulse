@@ -5,6 +5,7 @@ export type WikimediaProject =
   'wikipedia' | 'wikidata' | 'commons' | 'wiktionary' | 'other';
 
 export type ProcessedEvent = {
+  source: 'wikimedia';
   id: string;
   timestamp: Date;
   wiki: string;

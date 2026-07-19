@@ -17,6 +17,7 @@ export function transformWikimediaEvent(
   const wiki = event.wiki ?? '';
 
   return {
+    source: 'wikimedia',
     id: getEventId(event),
     timestamp: getEventTimestamp(event),
     wiki,

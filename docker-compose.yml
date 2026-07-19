@@ -33,6 +33,20 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  redis:
+    image: redis:8-alpine
+    container_name: stream-pulse-redis
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'allkeys-lru']
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
   ingester:
     build:
       context: ./ingester
@@ -59,6 +73,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       PORT: 3001
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
@@ -67,14 +83,57 @@ services:
       RABBITMQ_RAW_ROUTING_KEY: recentchange
       RABBITMQ_PROCESSED_QUEUE: wikimedia.recentchange.processed
       RABBITMQ_PROCESSED_ROUTING_KEY: recentchange.processed
+      RABBITMQ_BINANCE_EXCHANGE: binance
+      RABBITMQ_BINANCE_RAW_QUEUE: binance.aggTrade
+      RABBITMQ_BINANCE_RAW_ROUTING_KEY: aggTrade
+      RABBITMQ_BINANCE_PROCESSED_QUEUE: binance.aggTrade.processed
+      RABBITMQ_BINANCE_PROCESSED_ROUTING_KEY: aggTrade.processed
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: stream_pulse
       POSTGRES_PASSWORD: stream_pulse
       POSTGRES_DB: stream_pulse
       TYPEORM_SYNCHRONIZE: 'true'
+      REDIS_URL: redis://redis:6379
+      REDIS_CONNECT_TIMEOUT_MS: 2000
+      RABBITMQ_QUEUE_METRICS_INTERVAL_MS: 10000
     ports:
       - '3001:3001'
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.13.0
+    container_name: stream-pulse-prometheus
+    depends_on:
+      aggregator:
+        condition: service_started
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    container_name: stream-pulse-grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    ports:
+      - '3003:3000'
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
     restart: unless-stopped
 
   gateway:
@@ -95,6 +154,9 @@ services:
       RABBITMQ_EXCHANGE: wikimedia
       RABBITMQ_PROCESSED_QUEUE: wikimedia.recentchange.processed
       RABBITMQ_PROCESSED_ROUTING_KEY: recentchange.processed
+      RABBITMQ_BINANCE_EXCHANGE: binance
+      RABBITMQ_BINANCE_PROCESSED_QUEUE: binance.aggTrade.processed
+      RABBITMQ_BINANCE_PROCESSED_ROUTING_KEY: aggTrade.processed
       RABBITMQ_PREFETCH: 10
     ports:
       - '3002:3002'
@@ -114,3 +176,6 @@ services:
 volumes:
   rabbitmq_data:
   postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:

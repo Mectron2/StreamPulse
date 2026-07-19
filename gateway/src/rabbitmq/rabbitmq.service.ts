@@ -14,11 +14,25 @@ export class RabbitmqService
   private readonly logger = new Logger(RabbitmqService.name);
   private readonly rabbitMqUrl =
     process.env.RABBITMQ_URL ?? 'amqp://guest:guest@localhost:5672';
-  private readonly exchange = process.env.RABBITMQ_EXCHANGE ?? 'wikimedia';
-  private readonly queue =
-    process.env.RABBITMQ_PROCESSED_QUEUE ?? 'wikimedia.recentchange.processed';
-  private readonly routingKey =
-    process.env.RABBITMQ_PROCESSED_ROUTING_KEY ?? 'recentchange.processed';
+  private readonly routes = [
+    {
+      exchange: process.env.RABBITMQ_EXCHANGE ?? 'wikimedia',
+      queue:
+        process.env.RABBITMQ_PROCESSED_QUEUE ??
+        'wikimedia.recentchange.processed',
+      routingKey:
+        process.env.RABBITMQ_PROCESSED_ROUTING_KEY ?? 'recentchange.processed',
+    },
+    {
+      exchange: process.env.RABBITMQ_BINANCE_EXCHANGE ?? 'binance',
+      queue:
+        process.env.RABBITMQ_BINANCE_PROCESSED_QUEUE ??
+        'binance.aggTrade.processed',
+      routingKey:
+        process.env.RABBITMQ_BINANCE_PROCESSED_ROUTING_KEY ??
+        'aggTrade.processed',
+    },
+  ];
   private connection?: ChannelModel;
   private channel?: Channel;
   private shuttingDown = false;
@@ -54,11 +68,17 @@ export class RabbitmqService
   private async connectRabbitMq(): Promise<void> {
     this.connection = await connect(this.rabbitMqUrl);
     this.channel = await this.connection.createChannel();
-    await this.channel.assertExchange(this.exchange, 'topic', {
-      durable: true,
-    });
-    await this.channel.assertQueue(this.queue, { durable: true });
-    await this.channel.bindQueue(this.queue, this.exchange, this.routingKey);
+    for (const route of this.routes) {
+      await this.channel.assertExchange(route.exchange, 'topic', {
+        durable: true,
+      });
+      await this.channel.assertQueue(route.queue, { durable: true });
+      await this.channel.bindQueue(
+        route.queue,
+        route.exchange,
+        route.routingKey,
+      );
+    }
     await this.channel.prefetch(Number(process.env.RABBITMQ_PREFETCH ?? 10));
 
     this.connection.on('error', (error) => {
@@ -68,18 +88,22 @@ export class RabbitmqService
       if (!this.shuttingDown) this.logger.warn('RabbitMQ connection closed');
       void this.reconnectAfterClose();
     });
-    this.logger.log(`Consuming processed events from queue "${this.queue}"`);
+    this.logger.log(
+      `Consuming processed events from queues: ${this.routes.map((route) => route.queue).join(', ')}`,
+    );
   }
 
   private async consume(): Promise<void> {
     if (!this.channel) throw new Error('RabbitMQ channel is not initialized');
-    await this.channel.consume(
-      this.queue,
-      (message) => {
-        if (message) this.handleMessage(message);
-      },
-      { noAck: false },
-    );
+    for (const route of this.routes) {
+      await this.channel.consume(
+        route.queue,
+        (message) => {
+          if (message) this.handleMessage(message);
+        },
+        { noAck: false },
+      );
+    }
   }
 
   private handleMessage(message: ConsumeMessage): void {

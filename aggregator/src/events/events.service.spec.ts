@@ -1,14 +1,28 @@
 import { Repository } from 'typeorm';
 import { EventsService } from './events.service';
 import { ProcessedEventEntity } from './processed-event.entity';
+import { RedisCacheService } from '../cache/redis-cache.service';
+import { MetricsService } from '../observability/metrics.service';
 
 describe('EventsService', () => {
+  const recordProcessedEvent = jest.fn().mockResolvedValue(undefined);
+  const cache = { recordProcessedEvent } as unknown as RedisCacheService;
+  const stopPersistenceTimer = jest.fn();
+  const metrics = {
+    startPersistenceTimer: jest.fn(() => stopPersistenceTimer),
+  } as unknown as MetricsService;
+
+  beforeEach(() => {
+    recordProcessedEvent.mockClear();
+    stopPersistenceTimer.mockClear();
+  });
+
   it('saves processed event and returns it', async () => {
     const saveMock = jest.fn().mockResolvedValue(undefined);
     const repository = {
       save: saveMock,
     } as unknown as Repository<ProcessedEventEntity>;
-    const service = new EventsService(repository);
+    const service = new EventsService(repository, cache, metrics);
 
     const result = await service.processAndSave({
       id: 1,
@@ -27,6 +41,8 @@ describe('EventsService', () => {
     });
 
     expect(saveMock).toHaveBeenCalledWith(result);
+    expect(recordProcessedEvent).toHaveBeenCalledWith(result);
+    expect(stopPersistenceTimer).toHaveBeenCalled();
     expect(result).toMatchObject({
       id: '1',
       project: 'wikidata',
@@ -54,7 +70,11 @@ describe('EventsService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(query),
     } as unknown as Repository<ProcessedEventEntity>;
 
-    const result = await new EventsService(repository).findProcessedEvents(2);
+    const result = await new EventsService(
+      repository,
+      cache,
+      metrics,
+    ).findProcessedEvents(2);
 
     expect(query.orderBy).toHaveBeenCalledWith('event.timestamp', 'DESC');
     expect(query.addOrderBy).toHaveBeenCalledWith('event.id', 'DESC');
@@ -77,7 +97,7 @@ describe('EventsService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(query),
     } as unknown as Repository<ProcessedEventEntity>;
     await expect(
-      new EventsService(repository).findProcessedEvents(50),
+      new EventsService(repository, cache, metrics).findProcessedEvents(50),
     ).resolves.toEqual({
       items: [],
       nextCursor: null,

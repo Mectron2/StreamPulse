@@ -38,7 +38,7 @@ Wikimedia SSE
   -> Ingester
   -> RabbitMQ
   -> Aggregator
-  -> PostgreSQL
+  -> PostgreSQL + Redis hot cache
   -> RabbitMQ
   -> Gateway
   -> Client
@@ -76,7 +76,9 @@ Current behavior:
 - Normalizes events into processed Wikimedia change objects.
 - Calculates tags, diff size, risk score, importance score, and project type.
 - Persists processed events in PostgreSQL through TypeORM.
+- Updates Redis activity windows, top Wikimedia pages, and recent event lists.
 - Publishes processed events back to RabbitMQ.
+- Exposes Prometheus application and runtime metrics at `GET /metrics`.
 
 RabbitMQ output:
 
@@ -88,14 +90,15 @@ queue: wikimedia.recentchange.processed
 
 ### Gateway
 
-The gateway is planned as the client-facing service.
+The gateway is the client-facing service.
 
-Expected responsibilities:
+Current behavior:
 
 - Subscribe to processed event queues.
 - Stream live updates to clients.
-- Handle client history requests.
-- Ask the aggregator for historical data instead of reading PostgreSQL directly.
+- Proxy history requests to the aggregator instead of reading PostgreSQL directly.
+- Expose the Redis-backed dashboard snapshot at `GET /dashboard`.
+- Apply a short browser cache policy to dashboard snapshots.
 
 ### PostgreSQL
 
@@ -113,35 +116,68 @@ Expected responsibilities:
 
 ### Redis
 
-Redis is planned as the hot cache layer.
+Redis is the hot cache layer owned by the aggregator.
 
-Expected responsibilities:
+Current cached data:
 
-- Cache hot aggregates.
-- Demonstrate write-through and cache-aside strategies.
-- Expose cache hit rate through metrics.
+- Event and trade throughput for rolling one-minute and one-hour windows.
+- Top five Wikimedia pages for the current UTC hour.
+- The latest 100 processed Wikimedia events and Binance trades.
+
+The aggregator updates these structures after PostgreSQL succeeds. Redis uses
+bounded lists, expiring sorted sets, and a short deduplication key so redelivered
+messages do not inflate the top-pages counter. If Redis is unavailable, durable
+processing continues through PostgreSQL and RabbitMQ and `/dashboard` returns an
+empty snapshot with `cacheAvailable: false`.
+
+Configuration:
+
+```text
+REDIS_URL=redis://redis:6379
+REDIS_CONNECT_TIMEOUT_MS=2000
+```
 
 ### Frontend
 
-The frontend is planned as a React/Vite live dashboard.
+The frontend is a React/Vite live dashboard.
 
-Expected responsibilities:
+Current behavior:
 
 - Display live processed events from the gateway.
 - Show historical and aggregated views.
-- Use Apollo Client caching deliberately, including normalization and merge policies where needed.
+- Poll `/dashboard` every five seconds for Redis-backed throughput and top pages.
+- Seed and reconcile the live lists from the recent-event cache while retaining PostgreSQL history pagination.
 
 ### Observability
 
-The platform is expected to expose production-style observability.
+The aggregator has a complete local Prometheus and Grafana path.
 
-Expected responsibilities:
+Current behavior:
 
-- Expose `/metrics` from each service.
-- Scrape metrics with Prometheus.
-- Visualize throughput, p95 latency, broker lag, and cache hit rate in Grafana.
-- Provide readiness and liveness probes for Kubernetes.
-- Define alerts for high latency and broker lag.
+- Aggregator exposes `/metrics` in Prometheus format.
+- Prometheus scrapes the aggregator every five seconds and retains data for seven days.
+- Grafana automatically provisions the Prometheus datasource and the
+  `StreamPulse Aggregator` dashboard.
+- The dashboard shows throughput by source, processing and PostgreSQL p95
+  latency, RabbitMQ ready-message lag, Redis availability and hit rate, and
+  invalid/failed event rates.
+- Node.js process metrics are exported with the `streampulse_aggregator_`
+  prefix.
+
+Application metrics:
+
+```text
+streampulse_aggregator_events_processed_total
+streampulse_aggregator_event_processing_duration_seconds
+streampulse_aggregator_persistence_duration_seconds
+streampulse_aggregator_rabbitmq_queue_messages_ready
+streampulse_aggregator_redis_cache_reads_total
+streampulse_aggregator_redis_cache_writes_total
+streampulse_aggregator_redis_cache_available
+```
+
+Metrics for the remaining services, alert rules, and Kubernetes probes remain
+future observability work.
 
 ## Local Development
 
@@ -177,6 +213,39 @@ The aggregator service listens on:
 http://localhost:3001
 ```
 
+The gateway and frontend listen on:
+
+```text
+http://localhost:3002
+http://localhost:5173
+```
+
+Redis is exposed locally on `localhost:6379`. To inspect the dashboard caches
+while the stack is running:
+
+```bash
+curl http://localhost:3002/dashboard
+docker compose exec redis redis-cli --scan --pattern 'streampulse:*'
+```
+
+Observability endpoints:
+
+```text
+Aggregator metrics: http://localhost:3001/metrics
+Prometheus:         http://localhost:9090
+Grafana:            http://localhost:3003
+```
+
+Grafana uses `admin` / `admin` for local development unless overridden:
+
+```text
+GRAFANA_ADMIN_USER
+GRAFANA_ADMIN_PASSWORD
+```
+
+The Prometheus scrape configuration and provisioned Grafana dashboard are in
+`observability/`.
+
 ## Current Repository Structure
 
 ```text
@@ -186,15 +255,15 @@ http://localhost:3001
 |-- diagram.png
 |-- docker-compose.yml
 |-- aggregator/
+|-- frontend/
+|-- gateway/
+|-- observability/
 `-- ingester/
 ```
 
-Planned service directories:
+Potential shared package area, once duplication justifies it:
 
 ```text
-aggregator/
-gateway/
-frontend/
 packages/
 ```
 
@@ -211,7 +280,7 @@ Ingester
   -> queue: wikimedia.recentchange
 ```
 
-Planned processed event route:
+Current processed event route:
 
 ```text
 Aggregator
@@ -223,10 +292,9 @@ Aggregator
 
 ## Development Commands
 
-For the ingester service:
+For any TypeScript service, run its scripts from the service directory:
 
 ```bash
-cd ingester
 npm run build
 npm run lint
 ```
@@ -245,9 +313,9 @@ docker compose config
 
 ## Project Notes
 
-- The current implemented microservices are `ingester` and `aggregator`.
-- RabbitMQ, PostgreSQL, the ingester, and the aggregator are wired in `docker-compose.yml`.
-- MongoDB raw storage, Redis caching, gateway, frontend, Kubernetes, Helm, and observability are planned next.
+- The implemented services are `ingester`, `aggregator`, `gateway`, and `frontend`.
+- RabbitMQ, PostgreSQL, Redis, and all implemented services are wired in `docker-compose.yml`.
+- MongoDB raw storage, Kubernetes, Helm, Apollo Client, remaining-service metrics, and alerting remain roadmap work.
 - Architecture guidance for future agents and contributors is documented in `AGENTS.md`.
 
 ## Roadmap

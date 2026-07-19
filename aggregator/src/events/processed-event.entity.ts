@@ -3,6 +3,9 @@ import { ProcessedEventType, WikimediaProject } from './processed-event.type';
 
 @Entity({ name: 'processed_events' })
 export class ProcessedEventEntity {
+  @Column({ type: 'varchar', length: 32, default: 'wikimedia' })
+  source!: 'wikimedia';
+
   @PrimaryColumn({ type: 'varchar', length: 128 })
   id!: string;
 
