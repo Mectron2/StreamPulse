@@ -8,6 +8,7 @@ import {
   ProcessedBinanceTrade,
 } from './binance-trade.type';
 import { RedisCacheService } from '../cache/redis-cache.service';
+import { MetricsService } from '../observability/metrics.service';
 
 @Injectable()
 export class BinanceTradesService {
@@ -15,6 +16,7 @@ export class BinanceTradesService {
     @InjectRepository(BinanceTradeEntity)
     private readonly repository: Repository<BinanceTradeEntity>,
     private readonly cache: RedisCacheService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async processAndSave(
@@ -34,7 +36,12 @@ export class BinanceTradesService {
       buyerIsMaker: trade.m,
     };
 
-    await this.repository.save(processed);
+    const stopPersistenceTimer = this.metrics.startPersistenceTimer('binance');
+    try {
+      await this.repository.save(processed);
+    } finally {
+      stopPersistenceTimer();
+    }
     await this.cache.recordProcessedEvent(processed);
     return processed;
   }

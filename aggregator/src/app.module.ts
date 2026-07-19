@@ -7,6 +7,7 @@ import { RabbitmqModule } from './rabbitmq/rabbitmq.module';
 import { BinanceModule } from './binance/binance.module';
 import { BinanceTradeEntity } from './binance/binance-trade.entity';
 import { CacheModule } from './cache/cache.module';
+import { ObservabilityModule } from './observability/observability.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { CacheModule } from './cache/cache.module';
       entities: [ProcessedEventEntity, BinanceTradeEntity],
       synchronize: (process.env.TYPEORM_SYNCHRONIZE ?? 'true') === 'true',
     }),
+    ObservabilityModule,
     CacheModule,
     EventsModule,
     BinanceModule,

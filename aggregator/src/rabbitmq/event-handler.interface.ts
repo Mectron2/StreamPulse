@@ -5,7 +5,7 @@ export interface EventRoute {
 }
 
 export interface EventHandler {
-  readonly name: string;
+  readonly name: 'wikimedia' | 'binance';
   readonly rawRoute: EventRoute;
   readonly processedRoute: EventRoute;
   process(payload: unknown): Promise<unknown>;

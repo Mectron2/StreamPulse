@@ -78,6 +78,7 @@ Current behavior:
 - Persists processed events in PostgreSQL through TypeORM.
 - Updates Redis activity windows, top Wikimedia pages, and recent event lists.
 - Publishes processed events back to RabbitMQ.
+- Exposes Prometheus application and runtime metrics at `GET /metrics`.
 
 RabbitMQ output:
 
@@ -149,15 +150,34 @@ Current behavior:
 
 ### Observability
 
-The platform is expected to expose production-style observability.
+The aggregator has a complete local Prometheus and Grafana path.
 
-Expected responsibilities:
+Current behavior:
 
-- Expose `/metrics` from each service.
-- Scrape metrics with Prometheus.
-- Visualize throughput, p95 latency, broker lag, and cache hit rate in Grafana.
-- Provide readiness and liveness probes for Kubernetes.
-- Define alerts for high latency and broker lag.
+- Aggregator exposes `/metrics` in Prometheus format.
+- Prometheus scrapes the aggregator every five seconds and retains data for seven days.
+- Grafana automatically provisions the Prometheus datasource and the
+  `StreamPulse Aggregator` dashboard.
+- The dashboard shows throughput by source, processing and PostgreSQL p95
+  latency, RabbitMQ ready-message lag, Redis availability and hit rate, and
+  invalid/failed event rates.
+- Node.js process metrics are exported with the `streampulse_aggregator_`
+  prefix.
+
+Application metrics:
+
+```text
+streampulse_aggregator_events_processed_total
+streampulse_aggregator_event_processing_duration_seconds
+streampulse_aggregator_persistence_duration_seconds
+streampulse_aggregator_rabbitmq_queue_messages_ready
+streampulse_aggregator_redis_cache_reads_total
+streampulse_aggregator_redis_cache_writes_total
+streampulse_aggregator_redis_cache_available
+```
+
+Metrics for the remaining services, alert rules, and Kubernetes probes remain
+future observability work.
 
 ## Local Development
 
@@ -208,6 +228,24 @@ curl http://localhost:3002/dashboard
 docker compose exec redis redis-cli --scan --pattern 'streampulse:*'
 ```
 
+Observability endpoints:
+
+```text
+Aggregator metrics: http://localhost:3001/metrics
+Prometheus:         http://localhost:9090
+Grafana:            http://localhost:3003
+```
+
+Grafana uses `admin` / `admin` for local development unless overridden:
+
+```text
+GRAFANA_ADMIN_USER
+GRAFANA_ADMIN_PASSWORD
+```
+
+The Prometheus scrape configuration and provisioned Grafana dashboard are in
+`observability/`.
+
 ## Current Repository Structure
 
 ```text
@@ -219,6 +257,7 @@ docker compose exec redis redis-cli --scan --pattern 'streampulse:*'
 |-- aggregator/
 |-- frontend/
 |-- gateway/
+|-- observability/
 `-- ingester/
 ```
 
@@ -276,7 +315,7 @@ docker compose config
 
 - The implemented services are `ingester`, `aggregator`, `gateway`, and `frontend`.
 - RabbitMQ, PostgreSQL, Redis, and all implemented services are wired in `docker-compose.yml`.
-- MongoDB raw storage, Kubernetes, Helm, Apollo Client, and observability remain roadmap work.
+- MongoDB raw storage, Kubernetes, Helm, Apollo Client, remaining-service metrics, and alerting remain roadmap work.
 - Architecture guidance for future agents and contributors is documented in `AGENTS.md`.
 
 ## Roadmap

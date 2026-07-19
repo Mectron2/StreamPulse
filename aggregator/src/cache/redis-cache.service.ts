@@ -12,6 +12,7 @@ import {
   CacheableProcessedEvent,
   DashboardSnapshot,
 } from './cache.types';
+import { MetricsService } from '../observability/metrics.service';
 
 const ONE_MINUTE_MS = 60_000;
 const ONE_HOUR_MS = 60 * ONE_MINUTE_MS;
@@ -30,7 +31,7 @@ export class RedisCacheService
   private nextConnectionAttemptAt = 0;
   private connectionAttempt?: Promise<boolean>;
 
-  constructor() {
+  constructor(private readonly metrics: MetricsService) {
     this.client = createClient({
       url: process.env.REDIS_URL ?? 'redis://localhost:6379',
       socket: {
@@ -53,10 +54,14 @@ export class RedisCacheService
     } else if (this.client.isOpen) {
       this.client.destroy();
     }
+    this.metrics.setRedisAvailable(false);
   }
 
   async recordProcessedEvent(event: CacheableProcessedEvent): Promise<void> {
-    if (!(await this.ensureReady())) return;
+    if (!(await this.ensureReady())) {
+      this.metrics.recordRedisWrite('error');
+      return;
+    }
 
     const now = Date.now();
     const eventIdentity = `${event.source}:${event.id}`;
@@ -67,7 +72,10 @@ export class RedisCacheService
         expiration: { type: 'EX', value: DEDUPLICATION_TTL_SECONDS },
         condition: 'NX',
       });
-      if (firstDelivery === null) return;
+      if (firstDelivery === null) {
+        this.metrics.recordRedisWrite('duplicate');
+        return;
+      }
 
       const activityKey = this.activityKey();
       const sourceActivityKey = this.activityKey(event.source);
@@ -102,14 +110,19 @@ export class RedisCacheService
       }
 
       await transaction.exec();
+      this.metrics.recordRedisWrite('success');
     } catch (error) {
+      this.metrics.recordRedisWrite('error');
       this.handleOperationError('update cache', error);
     }
   }
 
   async getDashboardSnapshot(): Promise<DashboardSnapshot> {
     const empty = this.emptySnapshot();
-    if (!(await this.ensureReady())) return empty;
+    if (!(await this.ensureReady())) {
+      this.metrics.recordRedisRead('error');
+      return empty;
+    }
 
     const now = Date.now();
     try {
@@ -125,7 +138,7 @@ export class RedisCacheService
           this.client.lRange(this.recentKey('binance'), 0, 49),
         ]);
 
-      return {
+      const snapshot: DashboardSnapshot = {
         cacheAvailable: true,
         generatedAt: new Date(now).toISOString(),
         activity: { ...activity, bySource: { wikimedia, binance } },
@@ -148,7 +161,15 @@ export class RedisCacheService
           }),
         },
       };
+      const hasCachedData =
+        activity.lastHour > 0 ||
+        topPages.length > 0 ||
+        recentWiki.length > 0 ||
+        recentTrades.length > 0;
+      this.metrics.recordRedisRead(hasCachedData ? 'hit' : 'miss');
+      return snapshot;
     } catch (error) {
+      this.metrics.recordRedisRead('error');
       this.handleOperationError('read dashboard cache', error);
       return empty;
     }
@@ -182,10 +203,12 @@ export class RedisCacheService
     try {
       if (this.client.isOpen) this.client.destroy();
       await this.client.connect();
+      this.metrics.setRedisAvailable(true);
       this.logger.log('Redis cache connected');
       return true;
     } catch (error) {
       this.nextConnectionAttemptAt = Date.now() + 5000;
+      this.metrics.setRedisAvailable(false);
       this.logger.warn(
         `Redis cache unavailable; PostgreSQL processing continues: ${this.message(error)}`,
       );
@@ -195,6 +218,7 @@ export class RedisCacheService
 
   private handleOperationError(operation: string, error: unknown): void {
     this.nextConnectionAttemptAt = Date.now() + 5000;
+    this.metrics.setRedisAvailable(false);
     if (this.client.isOpen) this.client.destroy();
     this.logger.warn(`Failed to ${operation}: ${this.message(error)}`);
   }

@@ -11,6 +11,7 @@ import {
   EventHandler,
   EventRoute,
 } from './event-handler.interface';
+import { MetricsService } from '../observability/metrics.service';
 
 @Injectable()
 export class RabbitmqService
@@ -26,10 +27,12 @@ export class RabbitmqService
   private processedPerInterval = 0;
   private readonly LOG_INTERVAL_MS = 60000;
   private intervalRef?: ReturnType<typeof setInterval>;
+  private queueMetricsIntervalRef?: ReturnType<typeof setInterval>;
 
   constructor(
     @Inject(EVENT_HANDLERS)
     private readonly handlers: EventHandler[],
+    private readonly metrics: MetricsService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -38,6 +41,11 @@ export class RabbitmqService
       () => this.logProcessedCount(),
       this.LOG_INTERVAL_MS,
     );
+    this.queueMetricsIntervalRef = setInterval(
+      () => void this.collectQueueMetrics(),
+      Number(process.env.RABBITMQ_QUEUE_METRICS_INTERVAL_MS ?? 10000),
+    );
+    await this.collectQueueMetrics();
   }
 
   async onApplicationShutdown(): Promise<void> {
@@ -45,6 +53,8 @@ export class RabbitmqService
     await this.channel?.close();
     await this.connection?.close();
     if (this.intervalRef) clearInterval(this.intervalRef);
+    if (this.queueMetricsIntervalRef)
+      clearInterval(this.queueMetricsIntervalRef);
   }
 
   private async connectAndConsume(): Promise<void> {
@@ -110,16 +120,19 @@ export class RabbitmqService
     message: ConsumeMessage,
   ): Promise<void> {
     if (!this.channel) return;
-
-    const payload = this.parseMessage(message, handler.name);
-    if (payload === null) {
-      this.channel.ack(message);
-      return;
-    }
+    const stopTimer = this.metrics.startProcessingTimer(handler.name);
 
     try {
+      const payload = this.parseMessage(message, handler.name);
+      if (payload === null) {
+        this.metrics.recordProcessedEvent(handler.name, 'invalid');
+        this.channel.ack(message);
+        return;
+      }
+
       const processed = await handler.process(payload);
       if (processed === null) {
+        this.metrics.recordProcessedEvent(handler.name, 'invalid');
         this.channel.ack(message);
         return;
       }
@@ -127,11 +140,36 @@ export class RabbitmqService
       await this.publish(handler.processedRoute, processed);
       this.channel.ack(message);
       this.processedPerInterval++;
+      this.metrics.recordProcessedEvent(handler.name, 'success');
     } catch (error) {
+      this.metrics.recordProcessedEvent(handler.name, 'error');
       this.logger.error(
         `Failed to process ${handler.name} message: ${this.message(error)}`,
       );
       this.channel.nack(message, false, true);
+    } finally {
+      stopTimer();
+    }
+  }
+
+  private async collectQueueMetrics(): Promise<void> {
+    if (!this.channel) return;
+
+    try {
+      for (const handler of this.handlers) {
+        const queue = await this.channel.checkQueue(handler.rawRoute.queue);
+        this.metrics.setQueueMessagesReady(
+          handler.name,
+          handler.rawRoute.queue,
+          queue.messageCount,
+        );
+      }
+    } catch (error) {
+      if (!this.shuttingDown) {
+        this.logger.warn(
+          `Failed to collect queue metrics: ${this.message(error)}`,
+        );
+      }
     }
   }
 

@@ -6,6 +6,7 @@ import { ProcessedEventEntity } from './processed-event.entity';
 import { ProcessedEvent } from './processed-event.type';
 import { WikimediaRecentChange } from './wikimedia-recent-change.type';
 import { RedisCacheService } from '../cache/redis-cache.service';
+import { MetricsService } from '../observability/metrics.service';
 
 @Injectable()
 export class EventsService {
@@ -13,12 +14,19 @@ export class EventsService {
     @InjectRepository(ProcessedEventEntity)
     private readonly processedEventsRepository: Repository<ProcessedEventEntity>,
     private readonly cache: RedisCacheService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async processAndSave(event: WikimediaRecentChange): Promise<ProcessedEvent> {
     const processedEvent = transformWikimediaEvent(event);
 
-    await this.processedEventsRepository.save(processedEvent);
+    const stopPersistenceTimer =
+      this.metrics.startPersistenceTimer('wikimedia');
+    try {
+      await this.processedEventsRepository.save(processedEvent);
+    } finally {
+      stopPersistenceTimer();
+    }
     await this.cache.recordProcessedEvent(processedEvent);
 
     return processedEvent;

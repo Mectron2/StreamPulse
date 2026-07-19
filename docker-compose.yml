@@ -96,8 +96,44 @@ services:
       TYPEORM_SYNCHRONIZE: 'true'
       REDIS_URL: redis://redis:6379
       REDIS_CONNECT_TIMEOUT_MS: 2000
+      RABBITMQ_QUEUE_METRICS_INTERVAL_MS: 10000
     ports:
       - '3001:3001'
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.13.0
+    container_name: stream-pulse-prometheus
+    depends_on:
+      aggregator:
+        condition: service_started
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    container_name: stream-pulse-grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    ports:
+      - '3003:3000'
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
     restart: unless-stopped
 
   gateway:
@@ -141,3 +177,5 @@ volumes:
   rabbitmq_data:
   postgres_data:
   redis_data:
+  prometheus_data:
+  grafana_data:
