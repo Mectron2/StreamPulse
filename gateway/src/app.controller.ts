@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Header, Query } from '@nestjs/common';
 import { AppService } from './app.service';
 
 @Controller()
@@ -13,6 +13,12 @@ export class AppController {
   @Get('events')
   getEvents(@Query('limit') limit?: string, @Query('cursor') cursor?: string) {
     return this.appService.getEvents(limit, cursor);
+  }
+
+  @Get('dashboard')
+  @Header('Cache-Control', 'public, max-age=2, stale-while-revalidate=5')
+  getDashboard() {
+    return this.appService.getDashboard();
   }
 
   @Get('binance/trades')

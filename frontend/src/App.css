@@ -306,6 +306,58 @@ h2 {
   font-size: 14px;
   line-height: 1.43;
 }
+.top-pages-panel {
+  margin-top: 20px;
+  padding: 28px;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 40px;
+  border: 1px solid var(--hairline);
+  border-radius: 18px;
+}
+.top-pages-panel h3 {
+  margin: 8px 0 0;
+  font-size: 28px;
+  letter-spacing: -0.5px;
+}
+.top-pages-panel ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.top-pages-panel li {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid var(--hairline);
+}
+.top-pages-panel li:last-child {
+  border-bottom: 0;
+}
+.top-pages-panel li div {
+  min-width: 0;
+}
+.top-pages-panel li strong,
+.top-pages-panel li span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.top-pages-panel li span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.top-pages-panel li b {
+  color: var(--blue);
+  font-size: 20px;
+}
+.top-pages-panel .top-pages-empty {
+  color: var(--muted);
+}
 .history-section {
   padding: 96px max(24px, calc((100vw - 1120px) / 2));
   background: var(--parchment);
@@ -518,6 +570,9 @@ footer {
   }
   .metrics-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .top-pages-panel {
+    grid-template-columns: 1fr;
   }
   .history-header {
     align-items: flex-start;

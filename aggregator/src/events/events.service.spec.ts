@@ -1,14 +1,20 @@
 import { Repository } from 'typeorm';
 import { EventsService } from './events.service';
 import { ProcessedEventEntity } from './processed-event.entity';
+import { RedisCacheService } from '../cache/redis-cache.service';
 
 describe('EventsService', () => {
+  const recordProcessedEvent = jest.fn().mockResolvedValue(undefined);
+  const cache = { recordProcessedEvent } as unknown as RedisCacheService;
+
+  beforeEach(() => recordProcessedEvent.mockClear());
+
   it('saves processed event and returns it', async () => {
     const saveMock = jest.fn().mockResolvedValue(undefined);
     const repository = {
       save: saveMock,
     } as unknown as Repository<ProcessedEventEntity>;
-    const service = new EventsService(repository);
+    const service = new EventsService(repository, cache);
 
     const result = await service.processAndSave({
       id: 1,
@@ -27,6 +33,7 @@ describe('EventsService', () => {
     });
 
     expect(saveMock).toHaveBeenCalledWith(result);
+    expect(recordProcessedEvent).toHaveBeenCalledWith(result);
     expect(result).toMatchObject({
       id: '1',
       project: 'wikidata',
@@ -54,7 +61,10 @@ describe('EventsService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(query),
     } as unknown as Repository<ProcessedEventEntity>;
 
-    const result = await new EventsService(repository).findProcessedEvents(2);
+    const result = await new EventsService(
+      repository,
+      cache,
+    ).findProcessedEvents(2);
 
     expect(query.orderBy).toHaveBeenCalledWith('event.timestamp', 'DESC');
     expect(query.addOrderBy).toHaveBeenCalledWith('event.id', 'DESC');
@@ -77,7 +87,7 @@ describe('EventsService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(query),
     } as unknown as Repository<ProcessedEventEntity>;
     await expect(
-      new EventsService(repository).findProcessedEvents(50),
+      new EventsService(repository, cache).findProcessedEvents(50),
     ).resolves.toEqual({
       items: [],
       nextCursor: null,

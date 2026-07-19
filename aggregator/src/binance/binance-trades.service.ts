@@ -7,12 +7,14 @@ import {
   BinanceAggregateTrade,
   ProcessedBinanceTrade,
 } from './binance-trade.type';
+import { RedisCacheService } from '../cache/redis-cache.service';
 
 @Injectable()
 export class BinanceTradesService {
   constructor(
     @InjectRepository(BinanceTradeEntity)
     private readonly repository: Repository<BinanceTradeEntity>,
+    private readonly cache: RedisCacheService,
   ) {}
 
   async processAndSave(
@@ -33,6 +35,7 @@ export class BinanceTradesService {
     };
 
     await this.repository.save(processed);
+    await this.cache.recordProcessedEvent(processed);
     return processed;
   }
 

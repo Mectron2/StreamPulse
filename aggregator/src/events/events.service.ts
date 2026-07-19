@@ -5,18 +5,21 @@ import { transformWikimediaEvent } from './event-transformer';
 import { ProcessedEventEntity } from './processed-event.entity';
 import { ProcessedEvent } from './processed-event.type';
 import { WikimediaRecentChange } from './wikimedia-recent-change.type';
+import { RedisCacheService } from '../cache/redis-cache.service';
 
 @Injectable()
 export class EventsService {
   constructor(
     @InjectRepository(ProcessedEventEntity)
     private readonly processedEventsRepository: Repository<ProcessedEventEntity>,
+    private readonly cache: RedisCacheService,
   ) {}
 
   async processAndSave(event: WikimediaRecentChange): Promise<ProcessedEvent> {
     const processedEvent = transformWikimediaEvent(event);
 
     await this.processedEventsRepository.save(processedEvent);
+    await this.cache.recordProcessedEvent(processedEvent);
 
     return processedEvent;
   }

@@ -50,6 +50,22 @@ describe('AppService', () => {
     expect((url as URL).search).toBe('?limit=10&cursor=trade-cursor');
   });
 
+  it('proxies the Redis-backed dashboard snapshot', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: jest.fn().mockResolvedValue({ cacheAvailable: true }),
+    });
+
+    await expect(new AppService().getDashboard()).resolves.toEqual({
+      cacheAvailable: true,
+    });
+
+    const [url] = (global.fetch as jest.MockedFunction<typeof fetch>).mock
+      .calls[0];
+    expect((url as URL).pathname).toBe('/internal/dashboard');
+  });
+
   it('maps network failures to bad gateway', async () => {
     global.fetch = jest.fn().mockRejectedValue(new Error('offline'));
     await expect(new AppService().getEvents()).rejects.toBeInstanceOf(

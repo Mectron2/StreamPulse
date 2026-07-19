@@ -39,6 +39,27 @@ type BinanceTrade = {
 
 type EventsPage = { items: ProcessedEvent[]; nextCursor: string | null };
 type TradesPage = { items: BinanceTrade[]; nextCursor: string | null };
+type ActivityWindow = { lastMinute: number; lastHour: number };
+type DashboardSnapshot = {
+  cacheAvailable: boolean;
+  generatedAt: string;
+  activity: ActivityWindow & {
+    bySource: {
+      wikimedia: ActivityWindow;
+      binance: ActivityWindow;
+    };
+  };
+  topPages: Array<{
+    title: string;
+    wiki: string;
+    domain: string;
+    changes: number;
+  }>;
+  recent: {
+    wikimedia: ProcessedEvent[];
+    binance: BinanceTrade[];
+  };
+};
 
 const gatewayUrl = import.meta.env.VITE_GATEWAY_URL ?? "";
 const projectLabels: Record<ProcessedEvent["project"], string> = {
@@ -63,6 +84,20 @@ function formatNumber(value: number) {
   );
 }
 
+function mergeNewest<T extends { id: string; timestamp: string }>(
+  current: T[],
+  incoming: T[],
+): T[] {
+  const unique = new Map<string, T>();
+  for (const item of [...current, ...incoming]) unique.set(item.id, item);
+  return [...unique.values()]
+    .sort(
+      (left, right) =>
+        new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime(),
+    )
+    .slice(0, 250);
+}
+
 function App() {
   const [events, setEvents] = useState<ProcessedEvent[]>([]);
   const [trades, setTrades] = useState<BinanceTrade[]>([]);
@@ -84,6 +119,7 @@ function App() {
     "all",
   );
   const [liveReceived, setLiveReceived] = useState(0);
+  const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null);
 
   async function loadEvents(cursor?: string) {
     const params = new URLSearchParams({ limit: "50" });
@@ -102,12 +138,18 @@ function App() {
     return (await response.json()) as TradesPage;
   }
 
+  async function loadDashboard() {
+    const response = await fetch(`${gatewayUrl}/dashboard`);
+    if (!response.ok) throw new Error("Live insights are unavailable");
+    return (await response.json()) as DashboardSnapshot;
+  }
+
   useEffect(() => {
     let active = true;
     loadEvents()
       .then((page) => {
         if (!active) return;
-        setEvents(page.items);
+        setEvents((current) => mergeNewest(current, page.items));
         setNextCursor(page.nextCursor);
       })
       .catch((reason: unknown) => {
@@ -121,7 +163,7 @@ function App() {
     loadTrades()
       .then((page) => {
         if (!active) return;
-        setTrades(page.items);
+        setTrades((current) => mergeNewest(current, page.items));
         setTradesCursor(page.nextCursor);
       })
       .catch((reason: unknown) => {
@@ -132,6 +174,23 @@ function App() {
               : "Unable to load Binance history",
           );
       });
+
+    const refreshDashboard = () => {
+      loadDashboard()
+        .then((snapshot) => {
+          if (!active) return;
+          setDashboard(snapshot);
+          setEvents((current) =>
+            mergeNewest(current, snapshot.recent.wikimedia),
+          );
+          setTrades((current) =>
+            mergeNewest(current, snapshot.recent.binance),
+          );
+        })
+        .catch(() => undefined);
+    };
+    refreshDashboard();
+    const dashboardInterval = window.setInterval(refreshDashboard, 5000);
 
     const socket = io(gatewayUrl, { transports: ["websocket", "polling"] });
     socket.on("connect", () => setConnection("live"));
@@ -158,6 +217,7 @@ function App() {
 
     return () => {
       active = false;
+      window.clearInterval(dashboardInterval);
       socket.close();
     };
   }, []);
@@ -176,14 +236,12 @@ function App() {
   }, [events, project, query]);
 
   const stats = useMemo(() => {
-    const bots = events.filter((event) => event.isBot).length;
     const risky = events.filter((event) => event.riskScore >= 70).length;
     const diff = events.reduce(
       (sum, event) => sum + Math.abs(event.diffSize),
       0,
     );
     return {
-      bots: events.length ? Math.round((bots / events.length) * 100) : 0,
       risky,
       averageDiff: events.length ? Math.round(diff / events.length) : 0,
     };
@@ -198,10 +256,6 @@ function App() {
   const tradeStats = useMemo(
     () => ({
       lastPrice: trades[0]?.price ?? "0",
-      baseVolume: trades.reduce(
-        (sum, trade) => sum + Number(trade.quantity),
-        0,
-      ),
       quoteVolume: trades.reduce(
         (sum, trade) => sum + Number(trade.quoteQuantity),
         0,
@@ -369,14 +423,22 @@ function App() {
             </div>
             <div className="metrics-grid">
               <article className="metric-card">
-                <span>Events loaded</span>
-                <strong>{formatNumber(events.length)}</strong>
-                <p>Live and historical records in view</p>
+                <span>Events / minute</span>
+                <strong>
+                  {formatNumber(
+                    dashboard?.activity.bySource.wikimedia.lastMinute ?? 0,
+                  )}
+                </strong>
+                <p>Current Wikimedia throughput from Redis</p>
               </article>
               <article className="metric-card">
-                <span>Bot activity</span>
-                <strong>{stats.bots}%</strong>
-                <p>Share of automated contributions</p>
+                <span>Events / hour</span>
+                <strong>
+                  {formatNumber(
+                    dashboard?.activity.bySource.wikimedia.lastHour ?? 0,
+                  )}
+                </strong>
+                <p>Rolling activity window from Redis</p>
               </article>
               <article className="metric-card">
                 <span>High risk</span>
@@ -388,6 +450,28 @@ function App() {
                 <strong>{formatNumber(stats.averageDiff)}</strong>
                 <p>Characters changed per event</p>
               </article>
+            </div>
+            <div className="top-pages-panel">
+              <div>
+                <p className="eyebrow blue">Redis top pages</p>
+                <h3>Most edited this hour.</h3>
+              </div>
+              <ol>
+                {dashboard?.topPages.map((page) => (
+                  <li key={`${page.wiki}:${page.title}`}>
+                    <div>
+                      <strong>{page.title}</strong>
+                      <span>{page.wiki || page.domain}</span>
+                    </div>
+                    <b>{formatNumber(page.changes)}</b>
+                  </li>
+                ))}
+                {!dashboard?.topPages.length && (
+                  <li className="top-pages-empty">
+                    Waiting for Wikimedia activity…
+                  </li>
+                )}
+              </ol>
             </div>
           </section>
 
@@ -548,21 +632,29 @@ function App() {
             </div>
             <div className="metrics-grid">
               <article className="metric-card">
-                <span>Trades loaded</span>
-                <strong>{formatNumber(trades.length)}</strong>
-                <p>Live and historical aggregate trades</p>
+                <span>Trades / minute</span>
+                <strong>
+                  {formatNumber(
+                    dashboard?.activity.bySource.binance.lastMinute ?? 0,
+                  )}
+                </strong>
+                <p>Current Binance throughput from Redis</p>
+              </article>
+              <article className="metric-card">
+                <span>Trades / hour</span>
+                <strong>
+                  {formatNumber(
+                    dashboard?.activity.bySource.binance.lastHour ?? 0,
+                  )}
+                </strong>
+                <p>Rolling activity window from Redis</p>
               </article>
               <article className="metric-card">
                 <span>Last price</span>
                 <strong>
                   ${Number(tradeStats.lastPrice).toLocaleString()}
                 </strong>
-                <p>Latest observed BTC/USDT price</p>
-              </article>
-              <article className="metric-card">
-                <span>BTC volume</span>
-                <strong>{tradeStats.baseVolume.toFixed(4)}</strong>
-                <p>Base volume in the loaded window</p>
+                <p>Latest cached or streamed BTC/USDT price</p>
               </article>
               <article className="metric-card">
                 <span>Quote volume</span>

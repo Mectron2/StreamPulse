@@ -6,6 +6,7 @@ import { HealthController } from './health/health.controller';
 import { RabbitmqModule } from './rabbitmq/rabbitmq.module';
 import { BinanceModule } from './binance/binance.module';
 import { BinanceTradeEntity } from './binance/binance-trade.entity';
+import { CacheModule } from './cache/cache.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { BinanceTradeEntity } from './binance/binance-trade.entity';
       entities: [ProcessedEventEntity, BinanceTradeEntity],
       synchronize: (process.env.TYPEORM_SYNCHRONIZE ?? 'true') === 'true',
     }),
+    CacheModule,
     EventsModule,
     BinanceModule,
     RabbitmqModule,

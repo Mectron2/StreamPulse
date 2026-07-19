@@ -24,6 +24,10 @@ export class AppService {
     return this.getHistory('/internal/binance/trades', limit, cursor);
   }
 
+  async getDashboard(): Promise<unknown> {
+    return this.getAggregatorResource('/internal/dashboard');
+  }
+
   private async getHistory(
     path: string,
     limit?: string,
@@ -33,6 +37,14 @@ export class AppService {
     if (limit !== undefined) url.searchParams.set('limit', limit);
     if (cursor !== undefined) url.searchParams.set('cursor', cursor);
 
+    return this.requestAggregator(url);
+  }
+
+  private getAggregatorResource(path: string): Promise<unknown> {
+    return this.requestAggregator(new URL(path, this.aggregatorUrl));
+  }
+
+  private async requestAggregator(url: URL): Promise<unknown> {
     try {
       const response = await fetch(url, {
         signal: AbortSignal.timeout(this.timeoutMs),

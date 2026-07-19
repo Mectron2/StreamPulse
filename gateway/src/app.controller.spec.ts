@@ -22,4 +22,14 @@ describe('AppController', () => {
       });
     });
   });
+
+  it('returns the dashboard snapshot from the aggregator', async () => {
+    jest
+      .spyOn(AppService.prototype, 'getDashboard')
+      .mockResolvedValue({ cacheAvailable: true });
+
+    await expect(appController.getDashboard()).resolves.toEqual({
+      cacheAvailable: true,
+    });
+  });
 });

@@ -2,14 +2,20 @@ import { Repository } from 'typeorm';
 import { BinanceTradeEntity } from './binance-trade.entity';
 import { BinanceAggregateTrade } from './binance-trade.type';
 import { BinanceTradesService } from './binance-trades.service';
+import { RedisCacheService } from '../cache/redis-cache.service';
 
 describe('BinanceTradesService', () => {
   const save = jest.fn();
-  const service = new BinanceTradesService({
-    save,
-  } as unknown as Repository<BinanceTradeEntity>);
+  const recordProcessedEvent = jest.fn();
+  const service = new BinanceTradesService(
+    { save } as unknown as Repository<BinanceTradeEntity>,
+    { recordProcessedEvent } as unknown as RedisCacheService,
+  );
 
-  beforeEach(() => save.mockReset().mockResolvedValue(undefined));
+  beforeEach(() => {
+    save.mockReset().mockResolvedValue(undefined);
+    recordProcessedEvent.mockReset().mockResolvedValue(undefined);
+  });
 
   it('normalizes and stores an aggregate trade without losing precision', async () => {
     const raw: BinanceAggregateTrade = {
@@ -42,6 +48,7 @@ describe('BinanceTradesService', () => {
       buyerIsMaker: true,
     });
     expect(save).toHaveBeenCalledWith(result);
+    expect(recordProcessedEvent).toHaveBeenCalledWith(result);
   });
 
   it('marks a trade as buy when the buyer is the taker', async () => {
