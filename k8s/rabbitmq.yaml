@@ -46,6 +46,17 @@ spec:
           ports:
             - containerPort: 5672
             - containerPort: 15672
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: stream-pulse-secrets
+                  key: rabbitmq-default-user
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: stream-pulse-secrets
+                  key: rabbitmq-default-password
           volumeMounts:
             - name: data
               mountPath: /var/lib/rabbitmq
