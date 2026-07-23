@@ -48,7 +48,7 @@ services:
       - redis_data:/data
 
   ingester:
-    image: mectron/stream-pulse-ingester:latest
+    image: mectronx/stream-pulse-ingester:latest
     build:
       context: ./ingester
     container_name: stream-pulse-ingester
@@ -66,7 +66,7 @@ services:
     restart: unless-stopped
 
   aggregator:
-    image: mectron/stream-pulse-aggregator:latest
+    image: mectronx/stream-pulse-aggregator:latest
     build:
       context: ./aggregator
     container_name: stream-pulse-aggregator
@@ -139,7 +139,7 @@ services:
     restart: unless-stopped
 
   gateway:
-    image: mectron/stream-pulse-gateway:latest
+    image: mectronx/stream-pulse-gateway:latest
     build:
       context: ./gateway
     container_name: stream-pulse-gateway
@@ -166,7 +166,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: mectron/stream-pulse-frontend:latest
+    image: mectronx/stream-pulse-frontend:latest
     build:
       context: ./frontend
     container_name: stream-pulse-frontend
