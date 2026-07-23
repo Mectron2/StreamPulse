@@ -32,7 +32,6 @@ metadata:
   name: frontend
   namespace: stream-pulse
 spec:
-  type: NodePort
   selector:
     app: frontend
   ports:

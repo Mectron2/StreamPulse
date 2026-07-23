@@ -6,6 +6,7 @@ resources:
   - aggregator.yaml
   - gateway.yaml
   - frontend.yaml
+  - frontend-ingress.yaml
   - rabbitmq.yaml
   - postgres.yaml
   - redis.yaml
