@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: stream-pulse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: mectronx/stream-pulse-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3002
+          env:
+            - name: PORT
+              value: "3002"
+            - name: FRONTEND_ORIGIN
+              value: http://frontend
+            - name: AGGREGATOR_URL
+              value: http://aggregator:3001
+            - name: AGGREGATOR_REQUEST_TIMEOUT_MS
+              value: "5000"
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: stream-pulse-secrets
+                  key: rabbitmq-url
+            - name: RABBITMQ_EXCHANGE
+              value: wikimedia
+            - name: RABBITMQ_PROCESSED_QUEUE
+              value: wikimedia.recentchange.processed
+            - name: RABBITMQ_PROCESSED_ROUTING_KEY
+              value: recentchange.processed
+            - name: RABBITMQ_BINANCE_EXCHANGE
+              value: binance
+            - name: RABBITMQ_BINANCE_PROCESSED_QUEUE
+              value: binance.aggTrade.processed
+            - name: RABBITMQ_BINANCE_PROCESSED_ROUTING_KEY
+              value: aggTrade.processed
+            - name: RABBITMQ_PREFETCH
+              value: "10"
+          readinessProbe:
+            tcpSocket:
+              port: 3002
+          livenessProbe:
+            tcpSocket:
+              port: 3002
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: stream-pulse
+spec:
+  selector:
+    app: gateway
+  ports:
+    - port: 3002
+      targetPort: 3002

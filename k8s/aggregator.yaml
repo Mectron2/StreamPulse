@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aggregator
+  namespace: stream-pulse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aggregator
+  template:
+    metadata:
+      labels:
+        app: aggregator
+    spec:
+      containers:
+        - name: aggregator
+          image: mectronx/stream-pulse-aggregator:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3001
+          env:
+            - name: PORT
+              value: "3001"
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: stream-pulse-secrets
+                  key: rabbitmq-url
+            - name: RABBITMQ_EXCHANGE
+              value: wikimedia
+            - name: RABBITMQ_RAW_QUEUE
+              value: wikimedia.recentchange
+            - name: RABBITMQ_RAW_ROUTING_KEY
+              value: recentchange
+            - name: RABBITMQ_PROCESSED_QUEUE
+              value: wikimedia.recentchange.processed
+            - name: RABBITMQ_PROCESSED_ROUTING_KEY
+              value: recentchange.processed
+            - name: RABBITMQ_BINANCE_EXCHANGE
+              value: binance
+            - name: RABBITMQ_BINANCE_RAW_QUEUE
+              value: binance.aggTrade
+            - name: RABBITMQ_BINANCE_RAW_ROUTING_KEY
+              value: aggTrade
+            - name: RABBITMQ_BINANCE_PROCESSED_QUEUE
+              value: binance.aggTrade.processed
+            - name: RABBITMQ_BINANCE_PROCESSED_ROUTING_KEY
+              value: aggTrade.processed
+            - name: RABBITMQ_PREFETCH
+              value: "10"
+            - name: RABBITMQ_QUEUE_METRICS_INTERVAL_MS
+              value: "10000"
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              value: stream_pulse
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stream-pulse-secrets
+                  key: postgres-password
+            - name: POSTGRES_DB
+              value: stream_pulse
+            - name: TYPEORM_SYNCHRONIZE
+              value: "true"
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: REDIS_CONNECT_TIMEOUT_MS
+              value: "2000"
+          readinessProbe:
+            tcpSocket:
+              port: 3001
+          livenessProbe:
+            tcpSocket:
+              port: 3001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aggregator
+  namespace: stream-pulse
+spec:
+  selector:
+    app: aggregator
+  ports:
+    - port: 3001
+      targetPort: 3001
